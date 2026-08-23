@@ -1,0 +1,355 @@
+#gote-hand,
+#sente-hand {
+    min-height: 2em; /* フォントサイズに応じて調整してください */
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    color: #333;
+}
+
+/* ========== ホーム画面 ========== */
+#home-page {
+    max-width: 480px;
+    margin: 40px auto;
+    padding: 0 16px;
+}
+
+#home-page h2 {
+    margin-bottom: 4px;
+}
+
+.home-subtitle {
+    color: #777;
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.file-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    font-size: 15px;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.file-card:hover {
+    background: #f7f7f7;
+    border-color: #c14f22;
+}
+
+.file-card-empty {
+    color: #999;
+    font-size: 13px;
+    padding: 8px 0;
+}
+
+.primary-button {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 9px 18px;
+    border: none;
+    border-radius: 6px;
+    background: #c14f22;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.primary-button:hover {
+    background: #a63f18;
+}
+
+/* ========== 対局画面のツールバー ========== */
+#game-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 4px;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 10px;
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: #ddd;
+}
+
+#turn-display {
+    font-weight: bold;
+    font-size: 15px;
+    margin-right: 2px;
+}
+
+/* ボタンを結合して1つのまとまりに見せる（ページ送り・出力ボタン用） */
+.button-group {
+    display: flex;
+}
+
+.button-group .nav-button {
+    margin-left: 0;
+    border-radius: 0;
+}
+
+.button-group .nav-button + .nav-button {
+    border-left: none;
+}
+
+.button-group .nav-button:first-child {
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+}
+
+.button-group .nav-button:last-child {
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+/* 危険な操作（全リセットなど） */
+.nav-button.danger {
+    color: #c14f22;
+    border-color: #e7bda8;
+}
+
+.nav-button.danger:hover:not(:disabled) {
+    background: #fff2ec;
+}
+
+/* ========== モーダルダイアログ ========== */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.modal-box {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    width: 280px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.modal-message {
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 14px;
+    white-space: pre-wrap;
+}
+
+.modal-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 14px;
+    margin-bottom: 14px;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal-buttons button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #fff;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.modal-buttons .modal-cancel:hover {
+    background: #f0f0f0;
+}
+
+.modal-buttons .modal-confirm {
+    background: #c14f22;
+    color: #fff;
+    border-color: #c14f22;
+}
+
+.modal-buttons .modal-confirm:hover {
+    background: #a63f18;
+}
+
+#board {
+    display: grid;
+    position: relative;
+    grid-template-columns: repeat(9, 50px);
+    grid-template-rows: repeat(9, 50px);
+    background-image: url("4.png");
+    background-size: 100% 100%;
+    padding: 4px;
+    box-sizing: border-box;
+}
+
+#board-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+#file-numbers {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    margin-right: 4px;
+}
+
+#file-numbers div {
+    text-align: center;
+}
+
+#rank-numbers {
+    position: absolute;
+    right: -40px;
+    top: 30px;
+    display: grid;
+    grid-template-rows: repeat(9, 1fr);
+    height: 94%;
+}
+
+#rank-numbers div {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+}
+
+.square {
+    width: 50px;
+    height: 50px;
+    border: 1px solid black;
+    box-sizing: border-box;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: transparent;
+    font-size: 30px;
+    position: relative;
+    
+}
+
+.square.star::after {
+    content: "";
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    background: black;
+    border-radius: 50%;
+    right: -4.5px;
+    bottom: -4.5px;
+    pointer-events: none;
+}
+
+.square img {
+    width: 90%;
+    height: 90%;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.square.gote img {
+    transform: rotate(180deg);
+}
+
+.square.selected img {
+    transform: translateY(-6px);
+    filter: drop-shadow(0 5px 3px rgba(0, 0, 0, 0.35));
+}
+
+.square.gote.selected img {
+    transform: translateY(-6px) rotate(180deg);
+    filter: drop-shadow(0 5px 3px rgba(0, 0, 0, 0.35));
+}
+
+/* 持ち駒1個分の表示 */
+.hand-piece {
+    display: inline-block;
+    padding: 2px 6px;
+    margin-right: 4px;
+    border: 1px solid #999;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.hand-piece.selected{
+    background-color: #ffeded;
+}
+
+/* 指し手の符号（クリックで棋譜一覧を開く） */
+#move-notation {
+    margin-left: 8px;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+/* 戻る・進むボタン */
+.nav-button {
+    margin-left: 6px;
+    padding: 2px 10px;
+    border: 1px solid #999;
+    border-radius: 4px;
+    background: #fff;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.nav-button:hover:not(:disabled) {
+    background: #f0f0f0;
+}
+
+.nav-button:disabled {
+    color: #bbb;
+    border-color: #ddd;
+    cursor: default;
+}
+
+/* 棋譜一覧パネル */
+#move-history-panel {
+    margin-top: 4px;
+    padding: 8px;
+    border: 1px solid #999;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #fff;
+    font-size: 14px;
+    line-height: 1.6;
+    width: 150px;
+}
+
+.history-line {
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.history-line:hover {
+    background: #f0f0f0;
+}
+
+.history-line.current {
+    background: #ffeded;
+}
+
+.hidden {
+    display: none;
+    
+}
