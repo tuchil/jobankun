@@ -190,6 +190,35 @@ body {
     background: #a63f18;
 }
 
+/* ========== 局面メモ ========== */
+#memo-section {
+    margin-top: 12px;
+    max-width: 500px;
+}
+
+.memo-label {
+    font-size: 13px;
+    color: #777;
+    margin-bottom: 4px;
+}
+
+#memo-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 70px;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+}
+
+#memo-textarea:focus {
+    outline: none;
+    border-color: #c14f22;
+}
+
 #board {
     display: grid;
     position: relative;
