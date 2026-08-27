@@ -2080,6 +2080,29 @@ async function copyTextToClipboard(content, button) {
     }
 }
 
+// コピーする内容の計算に時間がかかる（圧縮などの非同期処理を挟む）場合に使う。
+// クリックしてすぐclipboard.writeを呼ぶことで「ユーザー操作に伴う実行」と認識させつつ、
+// 中身はPromiseが解決してから渡す（ClipboardItemが対応している）
+async function copyPromiseToClipboard(contentPromise, button) {
+    if (navigator.clipboard && typeof ClipboardItem !== "undefined") {
+        try {
+            const item = new ClipboardItem({
+                "text/plain": contentPromise.then((text) => new Blob([text], { type: "text/plain" }))
+            });
+            await navigator.clipboard.write([item]);
+            showCopyFeedback(button, "コピーしました");
+            return;
+        } catch (error) {
+            // 対応していない/失敗した場合は下のフォールバックへ
+        }
+    }
+
+    // ClipboardItemが使えない場合は、計算が終わるのを待ってから通常の方法でコピーする
+    // （ユーザー操作からの遅延が原因で失敗することがある）
+    const text = await contentPromise;
+    await copyTextToClipboard(text, button);
+}
+
 // ボタンの文字を一瞬変えて、コピーできたことを知らせる
 function showCopyFeedback(button, message) {
     const originalText = button.textContent;
@@ -2380,49 +2403,153 @@ kifPasteButton.addEventListener("click", async () => {
     await importKifText(text);
 });
 
-// ツリーコピーボタン（分岐ツリー全体をテキストとしてコピーする）
+// ツリーコピーボタン（分岐ツリーを軽量な共有コードにしてコピーする）
 const treeCopyButton = document.createElement("button");
 treeCopyButton.textContent = "ツリーコピー";
 treeCopyButton.classList.add("nav-button");
 kifPasteButton.insertAdjacentElement("afterend", treeCopyButton);
 
+// 木を「指し手一覧だけ」の軽い形に変換する（盤面情報は持たない。再生して作り直す前提）
+// k: kifText（例："２六歩(77)"）, m: メモ（あれば）, c: 子ノード（あれば）
+function serializeNodeCompact(node) {
+    const result = {};
+
+    if (node.kifText) {
+        result.k = node.kifText;
+    }
+
+    if (node.memo) {
+        result.m = node.memo;
+    }
+
+    if (node.children.length > 0) {
+        result.c = node.children.map(serializeNodeCompact);
+    }
+
+    return result;
+}
+
+// 文字列をgzip圧縮してBase64にする（対応ブラウザのみ。非対応ならBase64だけにする）
+async function compressText(text) {
+    if (typeof CompressionStream === "undefined") {
+        return "0:" + btoa(unescape(encodeURIComponent(text)));
+    }
+
+    const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+    const buffer = await new Response(stream).arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+
+    return "1:" + btoa(binary);
+}
+
+// compressTextで作ったコードを元の文字列に戻す
+async function decompressText(code) {
+    const separatorIndex = code.indexOf(":");
+    const flag = code.slice(0, separatorIndex);
+    const body = code.slice(separatorIndex + 1);
+
+    if (flag === "0") {
+        return decodeURIComponent(escape(atob(body)));
+    }
+
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const buffer = await new Response(stream).arrayBuffer();
+    return new TextDecoder().decode(buffer);
+}
+
 treeCopyButton.addEventListener("click", () => {
-    const text = JSON.stringify(serializeNode(rootNode));
-    copyTextToClipboard(text, treeCopyButton);
+    const compact = serializeNodeCompact(rootNode);
+    const json = JSON.stringify(compact);
+    copyPromiseToClipboard(compressText(json), treeCopyButton);
 });
 
-// ツリー貼り付けボタン（他の人からもらったツリーのテキストを読み込む）
+// ツリー貼り付けボタン（他の人からもらった共有コードを読み込む）
 const treePasteButton = document.createElement("button");
 treePasteButton.textContent = "ツリー貼り付け";
 treePasteButton.classList.add("nav-button");
 treeCopyButton.insertAdjacentElement("afterend", treePasteButton);
 
-// 貼り付けられたテキストを分岐ツリーとして読み込む（今のツリーとまるごと入れ替える）
+// compactな子ノード一覧を、実際に1手ずつ盤に指しながら本物の木として組み立てていく
+async function replayCompactChildren(compactChildren, realParentNode) {
+    for (const compactChild of compactChildren) {
+        const parsed = parseKifMoveToken(compactChild.k, lastMoveSquare);
+        if (!parsed) {
+            continue; // 解析できない手はスキップする
+        }
+
+        const ok = applyParsedMove(parsed);
+        if (!ok) {
+            continue; // 盤面と矛盾する手はスキップする
+        }
+
+        currentNode.memo = compactChild.m || "";
+        const realChildNode = currentNode;
+
+        if (compactChild.c) {
+            await replayCompactChildren(compactChild.c, realChildNode);
+        }
+
+        // 次の兄弟（別の分岐）に備えて、親の局面まで盤を戻す
+        currentNode = realParentNode;
+        restoreCurrentNode();
+    }
+}
+
+// 貼り付けられた共有コードを読み込んで、今のツリーとまるごと入れ替える
 async function importTreeText(text) {
+    let json;
+    try {
+        json = await decompressText(text.trim());
+    } catch (error) {
+        await showModal({ message: "読み込めませんでした。コードが正しくないようです。" });
+        return false;
+    }
+
     let data;
     try {
-        data = JSON.parse(text);
+        data = JSON.parse(json);
     } catch (error) {
         await showModal({ message: "読み込めませんでした。データの形式が正しくないようです。" });
         return false;
     }
 
-    if (!data || typeof data !== "object" || !Array.isArray(data.children)) {
+    if (!data || typeof data !== "object") {
         await showModal({ message: "読み込めませんでした。ツリーのデータではないようです。" });
         return false;
     }
 
-    rootNode = deserializeNode(data, null);
+    // 新しい開始局面から、1手ずつ再生して木を組み立て直す
+    rootNode = createNode(null, null);
+    rootNode.snapshot = initialSnapshot;
+    rootNode.memo = data.m || "";
     currentNode = rootNode;
     currentFileName = null;
 
+    restoreCurrentNode();
+
+    if (data.c) {
+        await replayCompactChildren(data.c, rootNode);
+    }
+
+    currentNode = rootNode;
     restoreCurrentNode();
     updateFileLabel();
     return true;
 }
 
 treePasteButton.addEventListener("click", async () => {
-    const text = await showTextAreaModal("送ってもらったツリーのデータを貼り付けてください（今開いているツリーと入れ替わります）");
+    const text = await showTextAreaModal("送ってもらったツリーの共有コードを貼り付けてください（今開いているツリーと入れ替わります）");
     if (!text) {
         return;
     }
