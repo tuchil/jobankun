@@ -1505,6 +1505,7 @@ function createNode(move, parent, kifText) {
     return {
         move: move,
         kifText: kifText || null, // KIF出力用の表記（例："２六歩(77)"）
+        memo: "", // この局面についてのメモ
         snapshot: null, // あとでcreateSnapshot()の結果を入れる
         parent: parent,
         children: []
@@ -1737,6 +1738,16 @@ function renderMoveTree() {
         g.appendChild(rect);
         g.appendChild(text);
 
+        // メモが書かれている局面には、目印として小さな点を左上に付ける
+        if (node.memo) {
+            const memoMark = document.createElementNS(svgNs, "circle");
+            memoMark.setAttribute("cx", x);
+            memoMark.setAttribute("cy", y);
+            memoMark.setAttribute("r", 3.5);
+            memoMark.setAttribute("fill", "#3d8bff");
+            g.appendChild(memoMark);
+        }
+
         g.addEventListener("click", () => {
             currentNode = node;
             restoreCurrentNode();
@@ -1921,6 +1932,9 @@ function restoreCurrentNode() {
     moveNotationDisplay.textContent =
         currentNode.move === null ? "開始局面" : currentNode.move;
 
+    // メモ欄も、今見ている局面のものに入れ替える
+    memoTextarea.value = currentNode.memo || "";
+
     updateNavButtons();
     renderHistoryList();
     renderMoveTree();
@@ -2041,18 +2055,11 @@ kifButton.addEventListener("click", () => {
 });
 
 // コピーボタン
-const copyKifButton = document.createElement("button");
-copyKifButton.textContent = "コピー";
-copyKifButton.classList.add("nav-button");
-kifButton.insertAdjacentElement("afterend", copyKifButton);
-
-// KIFテキストをクリップボードにコピーする
-async function copyKifToClipboard() {
-    const content = buildKifText();
-
+// 文字列をクリップボードにコピーする（button引数のあるボタンに一瞬フィードバックを出す）
+async function copyTextToClipboard(content, button) {
     try {
         await navigator.clipboard.writeText(content);
-        showCopyFeedback("コピーしました");
+        showCopyFeedback(button, "コピーしました");
     } catch (error) {
         // クリップボードAPIが使えない環境向けのフォールバック
         const textarea = document.createElement("textarea");
@@ -2064,9 +2071,9 @@ async function copyKifToClipboard() {
 
         try {
             document.execCommand("copy");
-            showCopyFeedback("コピーしました");
+            showCopyFeedback(button, "コピーしました");
         } catch (fallbackError) {
-            showCopyFeedback("コピーに失敗しました");
+            showCopyFeedback(button, "コピーに失敗しました");
         }
 
         document.body.removeChild(textarea);
@@ -2074,19 +2081,352 @@ async function copyKifToClipboard() {
 }
 
 // ボタンの文字を一瞬変えて、コピーできたことを知らせる
-function showCopyFeedback(message) {
-    const originalText = copyKifButton.textContent;
-    copyKifButton.textContent = message;
-    copyKifButton.disabled = true;
+function showCopyFeedback(button, message) {
+    const originalText = button.textContent;
+    button.textContent = message;
+    button.disabled = true;
 
     setTimeout(() => {
-        copyKifButton.textContent = originalText;
-        copyKifButton.disabled = false;
+        button.textContent = originalText;
+        button.disabled = false;
     }, 1200);
 }
 
+const copyKifButton = document.createElement("button");
+copyKifButton.textContent = "コピー";
+copyKifButton.classList.add("nav-button");
+kifButton.insertAdjacentElement("afterend", copyKifButton);
+
 copyKifButton.addEventListener("click", () => {
-    copyKifToClipboard();
+    copyTextToClipboard(buildKifText(), copyKifButton);
+});
+
+// KIF貼り付けボタン
+const kifPasteButton = document.createElement("button");
+kifPasteButton.textContent = "KIF貼り付け";
+kifPasteButton.classList.add("nav-button");
+copyKifButton.insertAdjacentElement("afterend", kifPasteButton);
+
+// テキストエリア付きの入力モーダル（KIF貼り付け・ツリー貼り付けの両方で使う）
+function showTextAreaModal(message) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        overlay.classList.add("modal-overlay");
+
+        const box = document.createElement("div");
+        box.classList.add("modal-box");
+        box.style.width = "420px";
+
+        const messageEl = document.createElement("div");
+        messageEl.classList.add("modal-message");
+        messageEl.textContent = message;
+        box.appendChild(messageEl);
+
+        const textarea = document.createElement("textarea");
+        textarea.classList.add("modal-input");
+        textarea.rows = 10;
+        textarea.style.fontFamily = "monospace";
+        textarea.style.resize = "vertical";
+        box.appendChild(textarea);
+
+        const buttonRow = document.createElement("div");
+        buttonRow.classList.add("modal-buttons");
+
+        function close(result) {
+            document.body.removeChild(overlay);
+            resolve(result);
+        }
+
+        const cancelButton = document.createElement("button");
+        cancelButton.textContent = "キャンセル";
+        cancelButton.classList.add("modal-cancel");
+        cancelButton.addEventListener("click", () => close(null));
+        buttonRow.appendChild(cancelButton);
+
+        const confirmButton = document.createElement("button");
+        confirmButton.textContent = "読み込む";
+        confirmButton.classList.add("modal-confirm");
+        confirmButton.addEventListener("click", () => close(textarea.value));
+        buttonRow.appendChild(confirmButton);
+
+        box.appendChild(buttonRow);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        textarea.focus();
+
+        overlay.addEventListener("click", (event) => {
+            if (event.target === overlay) {
+                close(null);
+            }
+        });
+    });
+}
+
+function showKifPasteModal() {
+    return showTextAreaModal("KIF形式のテキストを貼り付けてください（今の局面の続きとして読み込まれます）");
+}
+
+// KIFテキストから「指し手の符号だけ」を行ごとに取り出す
+// （"   1 ２六歩(77)" のような行から "２六歩(77)" を取る。手合割などのヘッダー行は無視する）
+function parseKifText(kifText) {
+    const lines = kifText.split(/\r?\n/);
+    const tokens = [];
+
+    for (const line of lines) {
+        const match = line.match(/^\s*(\d+)\s+(\S+)/);
+        if (match) {
+            tokens.push(match[2]);
+        }
+    }
+
+    return tokens;
+}
+
+// KIFの1手分の表記（例："２六歩(77)" "同歩(33)" "５五銀打"）を解析する
+// lastDestは直前の指し手の移動先で、「同」を実際のマスに変換するために使う
+function parseKifMoveToken(token, lastDest) {
+    let rest = token;
+    let toX, toY;
+
+    if (rest.charAt(0) === "同") {
+        if (!lastDest) {
+            return null;
+        }
+        toX = lastDest.x;
+        toY = lastDest.y;
+        rest = rest.slice(1);
+    } else {
+        const file = fullWidthDigits.indexOf(rest.charAt(0));
+        const rank = kanjiNumbers.indexOf(rest.charAt(1));
+        if (file === -1 || rank === -1) {
+            return null;
+        }
+        toX = 9 - file;
+        toY = rank;
+        rest = rest.slice(2);
+    }
+
+    const isDrop = rest.endsWith("打");
+    if (isDrop) {
+        rest = rest.slice(0, -1);
+    }
+
+    let fromX = null;
+    let fromY = null;
+    const originMatch = rest.match(/\((\d)(\d)\)$/);
+    if (originMatch) {
+        fromX = 9 - Number(originMatch[1]);
+        fromY = Number(originMatch[2]) - 1;
+        rest = rest.slice(0, rest.length - originMatch[0].length);
+    }
+
+    let promote = false;
+    let pieceLabel = rest;
+    if (pieceLabel.length > 1 && pieceLabel.endsWith("成")) {
+        promote = true;
+        pieceLabel = pieceLabel.slice(0, -1);
+    }
+
+    let pieceType = null;
+    for (const type in pieceNames) {
+        if (pieceNames[type] === pieceLabel) {
+            pieceType = type;
+        }
+    }
+    if (!pieceType) {
+        for (const type in promotedNames) {
+            if (promotedNames[type] === pieceLabel) {
+                pieceType = type;
+            }
+        }
+    }
+
+    if (!pieceType) {
+        return null;
+    }
+
+    return { toX, toY, fromX, fromY, isDrop, pieceType, promote };
+}
+
+// 解析済みの1手を、実際に盤に反映して木に記録する
+function applyParsedMove(parsed) {
+    const owner = turn;
+    const toSquare = document.querySelector(`[data-x="${parsed.toX}"][data-y="${parsed.toY}"]`);
+    if (!toSquare) {
+        return false;
+    }
+
+    if (parsed.isDrop) {
+        if (!hands[owner][parsed.pieceType] || hands[owner][parsed.pieceType] <= 0) {
+            return false;
+        }
+
+        const dropSymbol = owner === "sente" ? "▲" : "△";
+        const dropLabel = getSquareLabel(toSquare);
+
+        const newPiece = { type: parsed.pieceType, owner, promoted: false };
+        toSquare.piece = newPiece;
+        showPiece(toSquare, newPiece);
+        hands[owner][parsed.pieceType]--;
+        updateHands();
+
+        const dropNotation = `${dropSymbol}${dropLabel}${pieceNames[parsed.pieceType]}打`;
+        const dropKifText = `${dropLabel}${pieceNames[parsed.pieceType]}打`;
+
+        lastMoveSquare = { x: parsed.toX, y: parsed.toY };
+
+        turn = turn === "sente" ? "gote" : "sente";
+        updateTurnDisplay();
+        announceCheckStatus();
+
+        commitMove(dropNotation, dropKifText);
+        return true;
+    }
+
+    if (parsed.fromX === null || parsed.fromY === null) {
+        return false;
+    }
+
+    const fromSquare = document.querySelector(`[data-x="${parsed.fromX}"][data-y="${parsed.fromY}"]`);
+    if (!fromSquare || fromSquare.piece === null) {
+        return false;
+    }
+
+    const movingPiece = fromSquare.piece;
+
+    // 移動先に相手の駒があれば取る
+    if (toSquare.piece !== null) {
+        hands[owner][toSquare.piece.type]++;
+        updateHands();
+    }
+
+    const wasPromotedBefore = movingPiece.promoted;
+    toSquare.piece = movingPiece;
+
+    if (parsed.promote) {
+        movingPiece.promoted = true;
+    }
+
+    showPiece(toSquare, movingPiece);
+
+    const moveSymbol = owner === "sente" ? "▲" : "△";
+    const moveLabel = getSquareLabel(toSquare);
+
+    let pieceLabel;
+    if (wasPromotedBefore) {
+        pieceLabel = promotedNames[movingPiece.type] || pieceNames[movingPiece.type];
+    } else if (movingPiece.promoted) {
+        pieceLabel = pieceNames[movingPiece.type] + "成";
+    } else {
+        pieceLabel = pieceNames[movingPiece.type];
+    }
+
+    const moveNotation = `${moveSymbol}${moveLabel}${pieceLabel}`;
+    const fromFile = 9 - parsed.fromX;
+    const fromRank = parsed.fromY + 1;
+    const moveKifText = `${moveLabel}${pieceLabel}(${fromFile}${fromRank})`;
+
+    lastMoveSquare = { x: parsed.toX, y: parsed.toY };
+
+    fromSquare.innerHTML = "";
+    fromSquare.piece = null;
+    fromSquare.classList.remove("gote");
+
+    turn = turn === "sente" ? "gote" : "sente";
+    updateTurnDisplay();
+    announceCheckStatus();
+
+    commitMove(moveNotation, moveKifText);
+    return true;
+}
+
+// KIFテキストを丸ごと読み込んで、今の局面の続きとして順番に指していく
+async function importKifText(kifText) {
+    const tokens = parseKifText(kifText);
+
+    if (tokens.length === 0) {
+        await showModal({ message: "読み込める指し手が見つかりませんでした" });
+        return;
+    }
+
+    let successCount = 0;
+    for (const token of tokens) {
+        const parsed = parseKifMoveToken(token, lastMoveSquare);
+        if (!parsed) {
+            break;
+        }
+        const ok = applyParsedMove(parsed);
+        if (!ok) {
+            break;
+        }
+        successCount++;
+    }
+
+    forceSafariRepaint();
+
+    if (successCount < tokens.length) {
+        await showModal({
+            message: `${successCount}手まで読み込みました。\n${successCount + 1}手目以降は変換できませんでした。`
+        });
+    }
+}
+
+kifPasteButton.addEventListener("click", async () => {
+    const text = await showKifPasteModal();
+    if (!text) {
+        return;
+    }
+    await importKifText(text);
+});
+
+// ツリーコピーボタン（分岐ツリー全体をテキストとしてコピーする）
+const treeCopyButton = document.createElement("button");
+treeCopyButton.textContent = "ツリーコピー";
+treeCopyButton.classList.add("nav-button");
+kifPasteButton.insertAdjacentElement("afterend", treeCopyButton);
+
+treeCopyButton.addEventListener("click", () => {
+    const text = JSON.stringify(serializeNode(rootNode));
+    copyTextToClipboard(text, treeCopyButton);
+});
+
+// ツリー貼り付けボタン（他の人からもらったツリーのテキストを読み込む）
+const treePasteButton = document.createElement("button");
+treePasteButton.textContent = "ツリー貼り付け";
+treePasteButton.classList.add("nav-button");
+treeCopyButton.insertAdjacentElement("afterend", treePasteButton);
+
+// 貼り付けられたテキストを分岐ツリーとして読み込む（今のツリーとまるごと入れ替える）
+async function importTreeText(text) {
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch (error) {
+        await showModal({ message: "読み込めませんでした。データの形式が正しくないようです。" });
+        return false;
+    }
+
+    if (!data || typeof data !== "object" || !Array.isArray(data.children)) {
+        await showModal({ message: "読み込めませんでした。ツリーのデータではないようです。" });
+        return false;
+    }
+
+    rootNode = deserializeNode(data, null);
+    currentNode = rootNode;
+    currentFileName = null;
+
+    restoreCurrentNode();
+    updateFileLabel();
+    return true;
+}
+
+treePasteButton.addEventListener("click", async () => {
+    const text = await showTextAreaModal("送ってもらったツリーのデータを貼り付けてください（今開いているツリーと入れ替わります）");
+    if (!text) {
+        return;
+    }
+    await importTreeText(text);
 });
 
 // ここからファイル保存機能（ブラウザのlocalStorageに保存。ログイン等はまだ無し）
@@ -2099,6 +2439,7 @@ function serializeNode(node) {
     return {
         move: node.move,
         kifText: node.kifText,
+        memo: node.memo,
         snapshot: node.snapshot,
         children: node.children.map(serializeNode)
     };
@@ -2107,6 +2448,7 @@ function serializeNode(node) {
 // JSONから木を復元する（parentをここで組み立て直す）
 function deserializeNode(data, parent) {
     const node = createNode(data.move, parent, data.kifText);
+    node.memo = data.memo || "";
     node.snapshot = data.snapshot;
     node.children = data.children.map((childData) => deserializeNode(childData, node));
     return node;
@@ -2478,7 +2820,14 @@ const exportButtonGroup = document.createElement("div");
 exportButtonGroup.classList.add("button-group");
 exportButtonGroup.appendChild(kifButton);
 exportButtonGroup.appendChild(copyKifButton);
+exportButtonGroup.appendChild(kifPasteButton);
 toolbarActionGroup.appendChild(exportButtonGroup);
+
+const treeShareButtonGroup = document.createElement("div");
+treeShareButtonGroup.classList.add("button-group");
+treeShareButtonGroup.appendChild(treeCopyButton);
+treeShareButtonGroup.appendChild(treePasteButton);
+toolbarActionGroup.appendChild(treeShareButtonGroup);
 
 resetButton.classList.add("danger");
 toolbarActionGroup.appendChild(resetButton);
@@ -2488,6 +2837,32 @@ gameScreen.appendChild(gameToolbar);
 gameScreen.appendChild(goteHand);
 gameScreen.appendChild(layoutWrapper);
 gameScreen.appendChild(senteHand);
+
+// 局面ごとのメモ欄
+const memoSection = document.createElement("div");
+memoSection.id = "memo-section";
+
+const memoLabel = document.createElement("div");
+memoLabel.textContent = "メモ";
+memoLabel.classList.add("memo-label");
+memoSection.appendChild(memoLabel);
+
+const memoTextarea = document.createElement("textarea");
+memoTextarea.id = "memo-textarea";
+memoTextarea.placeholder = "この局面についてメモを書けます";
+memoSection.appendChild(memoTextarea);
+
+gameScreen.appendChild(memoSection);
+
+// 入力するたびに、今見ている局面のノードに保存する
+memoTextarea.addEventListener("input", () => {
+    currentNode.memo = memoTextarea.value;
+});
+
+// 入力欄から離れたタイミングで、メモの有無マークをツリーに反映する
+memoTextarea.addEventListener("blur", () => {
+    renderMoveTree();
+});
 
 // ホーム画面（保存済みファイルの一覧。ここが最初に表示される）
 const homePage = document.createElement("div");
@@ -2510,6 +2885,23 @@ const newFileButton = document.createElement("button");
 newFileButton.textContent = "＋ 新規作成";
 newFileButton.classList.add("primary-button");
 homePage.appendChild(newFileButton);
+
+const pasteTreeHomeButton = document.createElement("button");
+pasteTreeHomeButton.textContent = "📋 ツリーを貼り付けて開く";
+pasteTreeHomeButton.classList.add("nav-button");
+pasteTreeHomeButton.style.marginLeft = "8px";
+homePage.appendChild(pasteTreeHomeButton);
+
+pasteTreeHomeButton.addEventListener("click", async () => {
+    const text = await showTextAreaModal("送ってもらったツリーのデータを貼り付けてください");
+    if (!text) {
+        return;
+    }
+    const ok = await importTreeText(text);
+    if (ok) {
+        openGameScreen();
+    }
+});
 
 // ホーム画面のファイル一覧を作り直す
 function renderHomeFileList() {
