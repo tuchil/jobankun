@@ -239,6 +239,10 @@ body {
     padding: 4px;
     box-sizing: border-box;
     transition: transform 0.2s ease;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    -webkit-touch-callout: none;
 }
 
 #board.flipped {
@@ -288,6 +292,8 @@ body {
     background: transparent;
     font-size: 30px;
     position: relative;
+    user-select: none;
+    -webkit-user-select: none;
     
 }
 
