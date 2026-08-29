@@ -86,22 +86,42 @@ function forceSafariRepaint() {
 const fileNumbers = document.getElementById("file-numbers");
 const rankNumbers = document.getElementById("rank-numbers");
 
-for (let x = 9; x >= 1; x--) {
-    const number = document.createElement("div");
-    number.textContent = x;
-    fileNumbers.appendChild(number);
-}
-
 const kanjiNumbers = [
     "一", "二", "三", "四", "五",
     "六", "七", "八", "九"
 ];
 
-for (const number of kanjiNumbers) {
-    const rank = document.createElement("div");
-    rank.textContent = number;
-    rankNumbers.appendChild(rank);
+let boardFlipped = false; // 盤を反転（後手側から見た表示）しているか
+
+// 筋・段のラベルを、反転状態に応じて作り直す
+// （盤自体はCSSのtransform:rotate(180deg)で反転させるので、
+// ラベルの文字だけ回転させると読めなくなるため、並び順を入れ替える形で対応する）
+function updateBoardLabels() {
+    fileNumbers.innerHTML = "";
+    rankNumbers.innerHTML = "";
+
+    const fileOrder = boardFlipped
+        ? [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        : [9, 8, 7, 6, 5, 4, 3, 2, 1];
+
+    fileOrder.forEach((x) => {
+        const number = document.createElement("div");
+        number.textContent = x;
+        fileNumbers.appendChild(number);
+    });
+
+    const rankOrder = boardFlipped
+        ? [...kanjiNumbers].reverse()
+        : kanjiNumbers;
+
+    rankOrder.forEach((number) => {
+        const rank = document.createElement("div");
+        rank.textContent = number;
+        rankNumbers.appendChild(rank);
+    });
 }
+
+updateBoardLabels();
 
 // 棋譜表示用（筋を表す全角数字。fullWidthDigits[1]が"１"、fullWidthDigits[9]が"９"）
 const fullWidthDigits = ["０", "１", "２", "３", "４", "５", "６", "７", "８", "９"];
@@ -2529,12 +2549,12 @@ async function importTreeText(text) {
         return false;
     }
 
-    // 新しい開始局面から、1手ずつ再生して木を組み立て直す
-    rootNode = createNode(null, null);
-    rootNode.snapshot = initialSnapshot;
-    rootNode.memo = data.m || "";
-    currentNode = rootNode;
-    currentFileName = null;
+    // 今表示中のツリー（タブ）だけを、新しい開始局面から1手ずつ再生して組み立て直す
+    const root = createFreshTree();
+    root.memo = data.m || "";
+    trees[activeTreeName] = { root, current: root };
+    rootNode = root;
+    currentNode = root;
 
     restoreCurrentNode();
 
@@ -2543,13 +2563,15 @@ async function importTreeText(text) {
     }
 
     currentNode = rootNode;
+    trees[activeTreeName].current = rootNode;
     restoreCurrentNode();
     updateFileLabel();
+    renderTreeTabs();
     return true;
 }
 
 treePasteButton.addEventListener("click", async () => {
-    const text = await showTextAreaModal("送ってもらったツリーの共有コードを貼り付けてください（今開いているツリーと入れ替わります）");
+    const text = await showTextAreaModal("送ってもらったツリーの共有コードを貼り付けてください（今表示中のツリーと入れ替わります）");
     if (!text) {
         return;
     }
@@ -2593,16 +2615,23 @@ function listSavedFileNames() {
     return names.sort();
 }
 
-// 今の木をnameという名前で保存する
+// 今開いている全部の木を、nameという名前で保存する
 function saveTreeAs(name) {
-    const data = serializeNode(rootNode);
+    // 今見ている位置を、切り替える前に保存しておく
+    trees[activeTreeName].current = currentNode;
+
+    const data = {};
+    Object.keys(trees).forEach((treeName) => {
+        data[treeName] = serializeNode(trees[treeName].root);
+    });
+
     localStorage.setItem(FILE_STORAGE_PREFIX + name, JSON.stringify(data));
     currentFileName = name;
     updateFileLabel();
     renderFileList();
 }
 
-// nameで保存されている木を読み込んで、今の木と入れ替える
+// nameで保存されているデータを読み込んで、今の木と入れ替える
 function loadTreeByName(name) {
     const raw = localStorage.getItem(FILE_STORAGE_PREFIX + name);
     if (!raw) {
@@ -2610,12 +2639,28 @@ function loadTreeByName(name) {
     }
 
     const data = JSON.parse(raw);
-    rootNode = deserializeNode(data, null);
-    currentNode = rootNode;
+
+    if (Array.isArray(data.children)) {
+        // 古い形式（木が1つだけ）のファイル。「メイン」という1つの木として読み込む
+        const root = deserializeNode(data, null);
+        trees = { "メイン": { root, current: root } };
+    } else {
+        // 新しい形式（複数の木）
+        trees = {};
+        Object.keys(data).forEach((treeName) => {
+            const root = deserializeNode(data[treeName], null);
+            trees[treeName] = { root, current: root };
+        });
+    }
+
+    activeTreeName = Object.keys(trees)[0];
+    rootNode = trees[activeTreeName].root;
+    currentNode = trees[activeTreeName].current;
     currentFileName = name;
 
     restoreCurrentNode();
     updateFileLabel();
+    renderTreeTabs();
     renderFileList();
 }
 
@@ -2892,6 +2937,29 @@ resetButton.addEventListener("click", () => {
     resetAllMoves();
 });
 
+// 盤面反転ボタン
+const flipBoardButton = document.createElement("button");
+flipBoardButton.textContent = "盤面反転";
+flipBoardButton.classList.add("nav-button");
+flipBoardButton.addEventListener("click", () => {
+    boardFlipped = !boardFlipped;
+    board.classList.toggle("flipped", boardFlipped);
+    updateBoardLabels();
+    updateHandPositions();
+});
+
+// 反転状態に応じて、持ち駒の表示を上下入れ替える
+// （反転時は「今見ている側」が下に来るようにする）
+function updateHandPositions() {
+    if (boardFlipped) {
+        layoutWrapper.insertAdjacentElement("beforebegin", senteHand);
+        layoutWrapper.insertAdjacentElement("afterend", goteHand);
+    } else {
+        layoutWrapper.insertAdjacentElement("beforebegin", goteHand);
+        layoutWrapper.insertAdjacentElement("afterend", senteHand);
+    }
+}
+
 // ホームに戻るボタン
 const homeButton = document.createElement("button");
 homeButton.textContent = "ホーム";
@@ -2905,9 +2973,13 @@ homeButton.addEventListener("click", () => {
 const gameScreen = document.createElement("div");
 turnDisplay.parentNode.insertBefore(gameScreen, turnDisplay);
 
-// ツールバー：意味のあるまとまりごとにグループ化して並べる
+// ツールバー：意味のあるまとまりごとにグループ化して並べる（2段に分ける）
 const gameToolbar = document.createElement("div");
 gameToolbar.id = "game-toolbar";
+
+// ---------- 1段目：盤の操作・移動系 ----------
+const toolbarRow1 = document.createElement("div");
+toolbarRow1.classList.add("toolbar-row");
 
 // ① 手番・ファイル名・ホーム
 const toolbarFileGroup = document.createElement("div");
@@ -2915,11 +2987,11 @@ toolbarFileGroup.classList.add("toolbar-group");
 toolbarFileGroup.appendChild(turnDisplay);
 toolbarFileGroup.appendChild(fileLabel);
 toolbarFileGroup.appendChild(homeButton);
-gameToolbar.appendChild(toolbarFileGroup);
+toolbarRow1.appendChild(toolbarFileGroup);
 
 const toolbarSep1 = document.createElement("div");
 toolbarSep1.classList.add("toolbar-sep");
-gameToolbar.appendChild(toolbarSep1);
+toolbarRow1.appendChild(toolbarSep1);
 
 // ② 指し手の符号＋ページ送り（結合した見た目のボタン群）
 const toolbarNavGroup = document.createElement("div");
@@ -2933,34 +3005,166 @@ navButtonGroup.appendChild(backButton);
 navButtonGroup.appendChild(forwardButton);
 navButtonGroup.appendChild(lastButton);
 toolbarNavGroup.appendChild(navButtonGroup);
-gameToolbar.appendChild(toolbarNavGroup);
+toolbarRow1.appendChild(toolbarNavGroup);
 
 const toolbarSep2 = document.createElement("div");
 toolbarSep2.classList.add("toolbar-sep");
-gameToolbar.appendChild(toolbarSep2);
+toolbarRow1.appendChild(toolbarSep2);
 
-// ③ 出力系（結合した見た目のボタン群）＋ 全リセット（危険な操作として色分け）
-const toolbarActionGroup = document.createElement("div");
-toolbarActionGroup.classList.add("toolbar-group");
+// ③ 盤面反転（盤の見た目に関する操作なので1段目に置く）
+toolbarRow1.appendChild(flipBoardButton);
 
+gameToolbar.appendChild(toolbarRow1);
+
+// ---------- 2段目：入出力・危険な操作 ----------
+const toolbarRow2 = document.createElement("div");
+toolbarRow2.classList.add("toolbar-row");
+
+// ④ KIF系（結合した見た目のボタン群）
 const exportButtonGroup = document.createElement("div");
 exportButtonGroup.classList.add("button-group");
 exportButtonGroup.appendChild(kifButton);
 exportButtonGroup.appendChild(copyKifButton);
 exportButtonGroup.appendChild(kifPasteButton);
-toolbarActionGroup.appendChild(exportButtonGroup);
+toolbarRow2.appendChild(exportButtonGroup);
 
+const toolbarSep3 = document.createElement("div");
+toolbarSep3.classList.add("toolbar-sep");
+toolbarRow2.appendChild(toolbarSep3);
+
+// ⑤ ツリー共有系（結合した見た目のボタン群）
 const treeShareButtonGroup = document.createElement("div");
 treeShareButtonGroup.classList.add("button-group");
 treeShareButtonGroup.appendChild(treeCopyButton);
 treeShareButtonGroup.appendChild(treePasteButton);
-toolbarActionGroup.appendChild(treeShareButtonGroup);
+toolbarRow2.appendChild(treeShareButtonGroup);
 
-resetButton.classList.add("danger");
-toolbarActionGroup.appendChild(resetButton);
-gameToolbar.appendChild(toolbarActionGroup);
+// ⑥ 全リセット（危険な操作として色分けし、右端に寄せる）
+resetButton.classList.add("danger", "toolbar-push-right");
+toolbarRow2.appendChild(resetButton);
+
+gameToolbar.appendChild(toolbarRow2);
 
 gameScreen.appendChild(gameToolbar);
+
+// ツリータブバー（急戦／持久戦のような、木を切り替えるタブ）
+const treeTabBar = document.createElement("div");
+treeTabBar.id = "tree-tab-bar";
+gameScreen.appendChild(treeTabBar);
+
+// タブの中身を作り直す
+function renderTreeTabs() {
+    treeTabBar.innerHTML = "";
+
+    Object.keys(trees).forEach((name) => {
+        const tab = document.createElement("div");
+        tab.classList.add("tree-tab");
+        if (name === activeTreeName) {
+            tab.classList.add("active");
+        }
+
+        const label = document.createElement("span");
+        label.textContent = name;
+        tab.appendChild(label);
+
+        const renameIcon = document.createElement("span");
+        renameIcon.textContent = "✎";
+        renameIcon.classList.add("tree-tab-icon");
+        tab.appendChild(renameIcon);
+
+        const deleteIcon = document.createElement("span");
+        deleteIcon.textContent = "×";
+        deleteIcon.classList.add("tree-tab-icon");
+        tab.appendChild(deleteIcon);
+
+        tab.addEventListener("click", () => {
+            if (name !== activeTreeName) {
+                switchToTree(name);
+            }
+        });
+
+        renameIcon.addEventListener("click", async (event) => {
+            event.stopPropagation();
+
+            const newName = await showModal({
+                message: `「${name}」の新しい名前を入力してください`,
+                mode: "prompt",
+                defaultValue: name
+            });
+
+            if (!newName || newName === name) {
+                return;
+            }
+
+            if (trees[newName]) {
+                await showModal({ message: "その名前はすでに使われています" });
+                return;
+            }
+
+            trees[newName] = trees[name];
+            delete trees[name];
+
+            if (activeTreeName === name) {
+                activeTreeName = newName;
+            }
+
+            renderTreeTabs();
+        });
+
+        deleteIcon.addEventListener("click", async (event) => {
+            event.stopPropagation();
+
+            if (Object.keys(trees).length <= 1) {
+                await showModal({ message: "最後の1つのツリーは削除できません" });
+                return;
+            }
+
+            const ok = await showModal({ message: `「${name}」を削除しますか？` });
+            if (!ok) {
+                return;
+            }
+
+            delete trees[name];
+
+            if (activeTreeName === name) {
+                switchToTree(Object.keys(trees)[0]);
+            } else {
+                renderTreeTabs();
+            }
+        });
+
+        treeTabBar.appendChild(tab);
+    });
+
+    const addTab = document.createElement("div");
+    addTab.classList.add("tree-tab", "tree-tab-add");
+    addTab.textContent = "＋ ツリー追加";
+
+    addTab.addEventListener("click", async () => {
+        const name = await showModal({
+            message: "新しいツリーの名前を入力してください（例：急戦）",
+            mode: "prompt",
+            defaultValue: ""
+        });
+
+        if (!name) {
+            return;
+        }
+
+        if (trees[name]) {
+            await showModal({ message: "その名前はすでに使われています" });
+            return;
+        }
+
+        trees[name] = { root: createFreshTree(), current: null };
+        trees[name].current = trees[name].root;
+
+        switchToTree(name);
+    });
+
+    treeTabBar.appendChild(addTab);
+}
+
 gameScreen.appendChild(goteHand);
 gameScreen.appendChild(layoutWrapper);
 gameScreen.appendChild(senteHand);
@@ -3024,6 +3228,16 @@ pasteTreeHomeButton.addEventListener("click", async () => {
     if (!text) {
         return;
     }
+
+    // 新規ファイルとして開く（今開いていたファイル・他のツリータブは破棄する）
+    trees = {};
+    activeTreeName = "メイン";
+    trees[activeTreeName] = { root: createFreshTree(), current: null };
+    trees[activeTreeName].current = trees[activeTreeName].root;
+    rootNode = trees[activeTreeName].root;
+    currentNode = trees[activeTreeName].current;
+    currentFileName = null;
+
     const ok = await importTreeText(text);
     if (ok) {
         openGameScreen();
@@ -3059,13 +3273,18 @@ function renderHomeFileList() {
 }
 
 newFileButton.addEventListener("click", () => {
-    rootNode = createNode(null, null);
-    rootNode.snapshot = initialSnapshot;
-    currentNode = rootNode;
+    trees = {};
+    activeTreeName = "メイン";
+    trees[activeTreeName] = { root: createFreshTree(), current: null };
+    trees[activeTreeName].current = trees[activeTreeName].root;
+
+    rootNode = trees[activeTreeName].root;
+    currentNode = trees[activeTreeName].current;
     currentFileName = null;
 
     restoreCurrentNode();
     updateFileLabel();
+    renderTreeTabs();
     openGameScreen();
 });
 
@@ -3093,9 +3312,42 @@ function openHomePage() {
 // 開始局面をルートノードとして保存しておく
 // （新規作成・全リセットでも使い回せるように、標準の初期局面を別変数にも持っておく）
 const initialSnapshot = createSnapshot();
-let rootNode = createNode(null, null);
-rootNode.snapshot = initialSnapshot;
-let currentNode = rootNode;
+
+// 1つのファイルの中に、複数の「木」（急戦・持久戦、など）を持てるようにする
+// trees: { 名前: { root: ルートノード, current: 今見ている局面 } }
+let trees = {};
+let activeTreeName = "メイン";
+
+function createFreshTree() {
+    const root = createNode(null, null);
+    root.snapshot = initialSnapshot;
+    return root;
+}
+
+trees[activeTreeName] = { root: createFreshTree(), current: null };
+trees[activeTreeName].current = trees[activeTreeName].root;
+
+let rootNode = trees[activeTreeName].root;
+let currentNode = trees[activeTreeName].current;
+
+// 表示中の木を切り替える（今の位置は覚えておいてから移動する）
+function switchToTree(name) {
+    if (!trees[name]) {
+        return;
+    }
+
+    if (trees[activeTreeName]) {
+        trees[activeTreeName].current = currentNode;
+    }
+
+    activeTreeName = name;
+    rootNode = trees[name].root;
+    currentNode = trees[name].current || trees[name].root;
+
+    restoreCurrentNode();
+    renderTreeTabs();
+}
+
 updateNavButtons();
 renderMoveTree();
 renderFileList();
