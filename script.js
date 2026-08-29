@@ -253,6 +253,7 @@ function showPiece(square, piece) {
     square.style.display = "";
 
     const img = document.createElement("img");
+    img.draggable = false; // ブラウザ標準の画像ドラッグ（選択ハイライトの原因）を無効化
 
     // 成っているかどうかで参照するキーを変える
     let imageKey = piece.type;
@@ -494,6 +495,7 @@ function createHandPieceElement(owner, type) {
 
     // 駒の画像
     const img = document.createElement("img");
+    img.draggable = false; // ブラウザ標準の画像ドラッグ（選択ハイライトの原因）を無効化
     img.src = `shogi_pieces/${pieceImages[type]}`;
     img.classList.add("hand-piece-image");
     img.style.width = "28px";
