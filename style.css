@@ -65,12 +65,18 @@ body {
 /* ========== 対局画面のツールバー ========== */
 #game-toolbar {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 8px;
     padding: 8px 4px;
     border-bottom: 1px solid #eee;
     margin-bottom: 10px;
+}
+
+.toolbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
 }
 
 .toolbar-group {
@@ -83,6 +89,10 @@ body {
     width: 1px;
     height: 20px;
     background: #ddd;
+}
+
+.toolbar-push-right {
+    margin-left: auto;
 }
 
 #turn-display {
@@ -228,6 +238,11 @@ body {
     background-size: 100% 100%;
     padding: 4px;
     box-sizing: border-box;
+    transition: transform 0.2s ease;
+}
+
+#board.flipped {
+    transform: rotate(180deg);
 }
 
 #board-wrapper {
@@ -326,9 +341,12 @@ body {
 
 /* 指し手の符号（クリックで棋譜一覧を開く） */
 #move-notation {
+    display: inline-block;
+    min-width: 5.5em;
     margin-left: 8px;
     cursor: pointer;
     text-decoration: underline;
+    white-space: nowrap;
 }
 
 /* 戻る・進むボタン */
@@ -381,4 +399,59 @@ body {
 .hidden {
     display: none;
     
+}
+
+/* ========== ツリータブバー ========== */
+#tree-tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+
+.tree-tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px 6px 0 0;
+    border-bottom: none;
+    background: #f5f5f5;
+    font-size: 13px;
+    cursor: pointer;
+    color: #666;
+}
+
+.tree-tab:hover {
+    background: #eee;
+}
+
+.tree-tab.active {
+    background: #fff;
+    border-color: #c14f22;
+    color: #333;
+    font-weight: bold;
+}
+
+.tree-tab-icon {
+    color: #999;
+    padding: 0 2px;
+    font-size: 12px;
+}
+
+.tree-tab-icon:hover {
+    color: #c14f22;
+}
+
+.tree-tab-add {
+    background: none;
+    border: 1px dashed #ccc;
+    color: #999;
+}
+
+.tree-tab-add:hover {
+    border-color: #c14f22;
+    color: #c14f22;
 }
